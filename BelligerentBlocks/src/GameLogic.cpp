@@ -78,9 +78,9 @@ GameLogic::GameLogic(Platform &platform)
     int point_size = (int)(15.0f / ((float)dpi / 170.0f ));
 
     /* As bbutil renders text using device-specifc dpi, we need to compute
-     * a point size for the font, so that the text string fits into the bubble. 
-     * Note that Playbook is used as a reference point in this equation as we 
-     * know that at dpi of 170, font with point size ofi 15 fits into the 
+     * a point size for the font, so that the text string fits into the bubble.
+     * Note that Playbook is used as a reference point in this equation as we
+     * know that at dpi of 170, font with point size ofi 15 fits into the
      * bubble texture.
      */
     m_font = bbutil_load_font("/usr/fonts/font_repository/monotype/arial.ttf", point_size, dpi);

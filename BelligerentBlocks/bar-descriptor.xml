@@ -72,4 +72,8 @@
       <platformArchitecture>armle-v7</platformArchitecture>
       <asset path="Device-Debug/BelligerentBlocks" entry="true" type="Qnx/Elf">Blocks</asset>
    </configuration>
+   <configuration name="Simulator-Debug">
+      <platformArchitecture>x86</platformArchitecture>
+      <asset path="Simulator-Debug/BelligerentBlocks" entry="true" type="Qnx/Elf">BelligerentBlocks</asset>
+   </configuration>
 </qnx>

@@ -40,22 +40,11 @@
 
 namespace blocks {
 
-static const char SCORELOOP_GAME_ID[] = "d346c484-12aa-49a2-a0a0-de2f87492d72";
-static const char SCORELOOP_GAME_SECRET[] = "aAa+DehBfyGO/CYaE3nWomgu7SIbWFczUih+Qwf3/n7u0y3nyq5Hag==";
-static const char SCORELOOP_GAME_VERSION[] = "1.0";
-static const char SCORELOOP_GAME_CURRENCY[] = "ASC";
-static const char SCORELOOP_GAME_LANGUAGE[] = "en";
-
 static const int NUM_LEADERBOARD_SCORES = 5;
 
 Platform::Platform()
     : m_handler(NULL)
     , m_screenContext(NULL)
-    , m_scoreloopClient(NULL)
-    , m_userController(NULL)
-    , m_scoreController(NULL)
-    , m_scoresController(NULL)
-    , m_score(NULL)
     , m_scoreOperationInProgress(false)
     , m_leaderboardOperationInProgress(false)
     , m_userOperationInProgress(false)
@@ -82,12 +71,6 @@ Platform::Platform()
 Platform::~Platform() {
     sqlite3_close(m_db);
 
-    SC_Score_Release(m_score);
-    SC_ScoresController_Release(m_scoresController);
-    SC_ScoreController_Release(m_scoreController);
-    SC_UserController_Release(m_userController);
-    SC_Client_Release(m_scoreloopClient);
-
     bbutil_terminate();
     screen_stop_events(m_screenContext);
     screen_destroy_context(m_screenContext);
@@ -95,47 +78,6 @@ Platform::~Platform() {
 }
 
 bool Platform::init() {
-    // Fire up BBM Game SDK (Scoreloop)
-    SC_InitData_Init(&m_scoreloopInitData);
-
-    SC_Error_t rc = SC_Client_New(&m_scoreloopClient,
-            &m_scoreloopInitData,
-            SCORELOOP_GAME_ID,
-            SCORELOOP_GAME_SECRET,
-            SCORELOOP_GAME_VERSION,
-            SCORELOOP_GAME_CURRENCY,
-            SCORELOOP_GAME_LANGUAGE);
-
-    if (rc != SC_OK) {
-        if (rc == SC_PAL_INITIALIZATION_FAILED) {
-            fprintf(stderr, "Hint: check bar descriptor to ensure read_device_identifying_information is one of the requested actions.: %d\n", rc);
-            return false;
-        } else {
-            fprintf(stderr, "Error initializing scoreloopcore: %d\n", rc);
-            return false;
-        }
-    }
-
-    rc = SC_Client_CreateUserController(m_scoreloopClient, &m_userController, fetchUserComplete, this);
-    if (rc != SC_OK) {
-        fprintf(stderr, "Error creating user controller: %d\n", rc);
-        return false;
-    }
-
-    rc = SC_Client_CreateScoreController(m_scoreloopClient, &m_scoreController, submitScoreComplete, this);
-    if (rc != SC_OK) {
-        fprintf(stderr, "Error creating score controller: %d\n", rc);
-        return false;
-    }
-
-    rc = SC_Client_CreateScoresController(m_scoreloopClient, &m_scoresController, fetchLeaderboardComplete, this);
-    if (rc != SC_OK) {
-        fprintf(stderr, "Error creating scores (leaderboard) controller: %d\n", rc);
-        return false;
-    }
-
-    SC_ScoresController_SetMode(m_scoresController, 0);
-    SC_ScoresController_SetSearchList(m_scoresController, SC_SCORES_SEARCH_LIST_ALL);
 
     struct stat fileInfo;
     if (stat("data/scores.db", &fileInfo) == -1) {
@@ -182,6 +124,7 @@ bool Platform::init() {
     }
 
     // Now we can open it.
+    unsigned int rc;
     rc = sqlite3_open_v2("data/scores.db", &m_db, SQLITE_OPEN_READWRITE, NULL);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "Could not open scores db. %d\n", rc);
@@ -209,12 +152,6 @@ void Platform::processEvents() {
         if (event == NULL) {
             // No more events in the queue
             break;
-        }
-
-        // Give Scoreloop the first shot at handling the event
-        // (for callbacks)
-        if (SC_HandleBPSEvent(&m_scoreloopInitData, event) == BPS_SUCCESS) {
-            continue;
         }
 
         // Not a ScoreLoopCore event, continue processing...
@@ -314,55 +251,21 @@ void Platform::submitScore(int score) {
         ASSERT(!"submitScore called while operation in progress");
         return;
     }
-
-    ASSERT(NULL == m_score);
-    ASSERT(NULL != m_scoreloopClient);
-
-    SC_Error_t rc = SC_Client_CreateScore(m_scoreloopClient, &m_score);
-    if (rc != SC_OK) {
-        fprintf(stderr, "Error creating score: %d\n", rc);
-        return;
-    }
-
-    SC_Score_SetResult(m_score, static_cast<double>(score));
-    SC_Score_SetMode(m_score, 0);
-
-    rc = SC_ScoreController_SubmitScore(m_scoreController, m_score);
-
-    if (rc != SC_OK) {
-        SC_Score_Release(m_score);
-        m_score = NULL;
-        fprintf(stderr, "Error submitting score: %d\n", rc);
-        return;
-    }
-
     m_scoreOperationInProgress = true;
+    submitScoreComplete(score);
 }
 
-void Platform::submitScoreComplete(SC_Error_t result) {
+void Platform::submitScoreComplete(int score) {
     ASSERT(m_scoreOperationInProgress);
-    ASSERT(m_score);
+
+    submitLocalScore("User1", score);
 
     m_scoreOperationInProgress = false;
 
-    if (result == SC_HTTP_SERVER_ERROR) {
-        // Just store scores locally.
-        SC_User_h user = SC_UserController_GetUser(m_userController);
-        const char *login = SC_String_GetData(SC_User_GetLogin(user));
-        double score = SC_Score_GetResult(m_score);
-        submitLocalScore(login, score);
-    } else if (result != SC_OK) {
-        // A result of SC_HTTP_SERVER_ERROR means the network is toast.
-        fprintf(stderr, "Submit score failed: %d\n", result);
-    }
-
-    SC_Score_Release(m_score);
-    m_score = NULL;
     m_handler->onSubmitScore();
 }
 
 void Platform::fetchLeaderboard() {
-    const SC_Range_t scores = {0, NUM_LEADERBOARD_SCORES};
 
     if (m_leaderboardOperationInProgress) {
         // It is a GameLogic error to call fetchLeaderboard more than once
@@ -371,48 +274,17 @@ void Platform::fetchLeaderboard() {
         return;
     }
 
-    SC_Error_t rc = SC_ScoresController_LoadScores(m_scoresController, scores);
-    if (rc != SC_OK) {
-        fprintf(stderr, "Error loading leaderboard score range: %d\n", rc);
-        return;
-    }
-
     m_leaderboardOperationInProgress = true;
+    fetchLeaderboardComplete();
 }
 
-void Platform::fetchLeaderboardComplete(SC_Error_t result) {
+void Platform::fetchLeaderboardComplete() {
     ASSERT(m_leaderboardOperationInProgress);
-    m_leaderboardOperationInProgress = false;
 
     m_leaderboard.clear();
+    fetchLocalScores(m_leaderboard);
 
-    if (result == SC_OK) {
-        SC_ScoreList_h scoreList = SC_ScoresController_GetScores(m_scoresController);
-        if (scoreList == NULL) {
-            fprintf(stderr, "Could not copy results to the score list.\n");
-            return;
-        }
-
-        const unsigned int numScores = SC_ScoreList_GetCount(scoreList);
-
-        for (unsigned int i = 0; i < numScores; i++) {
-            SC_Score_h score = SC_ScoreList_GetAt(scoreList, i);
-            SC_User_h user = SC_Score_GetUser(score);
-
-            std::string login = "Unknown";
-
-            if (user) {
-                login = SC_String_GetData(SC_User_GetLogin(user));
-            }
-
-            Score leaderboardScore(SC_Score_GetRank(score), login, static_cast<int>(SC_Score_GetResult(score)));
-            m_leaderboard.push_back(leaderboardScore);
-        }
-    } else if (result == SC_HTTP_SERVER_ERROR) {
-        fetchLocalScores(m_leaderboard);
-    } else {
-        fprintf(stderr, "Fetching leaderboard failed: %d\n", result);
-    }
+    m_leaderboardOperationInProgress = false;
 
     ASSERT(m_handler);
     m_handler->onLeaderboardReady(m_leaderboard);
@@ -425,59 +297,18 @@ void Platform::fetchUser() {
         ASSERT(!"fetchUser called while user operation in progress");
         return;
     }
-
-    SC_Error_t result = SC_UserController_LoadUser(m_userController);
-    if (result != SC_OK) {
-        fprintf(stderr, "Error requesting scoreloop user: %d\n", result);
-    }
-
     m_userOperationInProgress = true;
+    fetchUserComplete();
 }
 
-void Platform::fetchUserComplete(SC_Error_t result) {
+void Platform::fetchUserComplete() {
     ASSERT(m_userOperationInProgress);
+
     m_userOperationInProgress = false;
-    std::string errorString;
 
-    if (result != SC_OK) {
-        if (result == SC_INVALID_USER_DATA) {
-            SC_UserValidationError_t err = SC_UserController_GetValidationErrors(m_userController);
-
-            switch (err) {
-            case SC_USERNAME_ALREADY_TAKEN:
-                errorString = "Username already taken";
-                break;
-            case SC_USERNAME_FORMAT_INVALID:
-                errorString = "Username format is invalid";
-                break;
-            case SC_USERNAME_TOO_SHORT:
-                errorString = "Username format is invalid";
-                break;
-            default:
-                errorString = "Something bad happened";
-                break;
-            }
-        } else if (result == SC_HTTP_SERVER_ERROR) {
-            SC_User_h user = SC_UserController_GetUser(m_userController);
-            const SC_String_h login = SC_User_GetLogin(user);
-            if (login == NULL) {
-                m_handler->onUserReady("", true, "");
-            } else {
-                m_handler->onUserReady(SC_String_GetData(login), false, "");
-            }
-            return;
-        } else {
-            m_handler->onUserReady("", true, "Error fetching user result.");
-            return;
-        }
-    }
-
-    SC_User_h user = SC_UserController_GetUser(m_userController);
-
-    const bool isAnonymous = (SC_User_GetState(user) == SC_USER_STATE_ANONYMOUS);
-    const SC_String_h login = SC_User_GetLogin(user);
     ASSERT(m_handler);
-    m_handler->onUserReady(SC_String_GetData(login), isAnonymous, errorString);
+    m_handler->onUserReady("User1", false, "");
+    return;
 }
 
 void Platform::submitUserName(const std::string& userName) {
@@ -486,21 +317,8 @@ void Platform::submitUserName(const std::string& userName) {
         return;
     }
 
-    const SC_User_h user = SC_UserController_GetUser(m_userController);
-
-    SC_Error_t rc = SC_User_SetLogin(user, userName.c_str());
-    if (SC_OK != rc) {
-        fprintf(stderr, "Error setting login: %d\n", rc);
-        return;
-    }
-
-    rc = SC_UserController_UpdateUser(m_userController);
-    if (SC_OK != rc) {
-        fprintf(stderr, "Error updating server with user info: %d\n", rc);
-        return;
-    }
-
     m_userOperationInProgress = true;
+    fetchUserComplete();
 }
 
 void Platform::displayPrompt(const std::string& prompt) {

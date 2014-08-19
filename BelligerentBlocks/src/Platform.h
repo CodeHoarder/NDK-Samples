@@ -23,9 +23,6 @@
 #ifndef PLATFORM_H_
 #define PLATFORM_H_
 
-#include <scoreloop/sc_client.h>
-#include <scoreloop/sc_init.h>
-
 #include <screen/screen.h>
 
 #include <sqlite3.h>
@@ -306,35 +303,17 @@ public:
     void displayPrompt(const std::string& prompt);
 
 private:
-    void submitScoreComplete(SC_Error_t result);
-    void fetchLeaderboardComplete(SC_Error_t result);
-    void fetchUserComplete(SC_Error_t result);
-
-    static void submitScoreComplete(void* userData, SC_Error_t result) {
-        (reinterpret_cast<Platform*>(userData))->submitScoreComplete(result);
-    }
-
-    static void fetchLeaderboardComplete(void* userData, SC_Error_t result) {
-        (reinterpret_cast<Platform*>(userData))->fetchLeaderboardComplete(result);
-    }
-
-    static void fetchUserComplete(void* userData, SC_Error_t result) {
-        (reinterpret_cast<Platform*>(userData))->fetchUserComplete(result);
-    }
+    void submitScoreComplete(int score);
+    void fetchLeaderboardComplete();
+    void fetchUserComplete();
 
     void submitLocalScore(const char* login, double score);
     void fetchLocalScores(std::vector<Score>& scores);
 
-    SC_InitData_t m_scoreloopInitData;
     std::vector<Score> m_leaderboard;
 
     PlatformEventHandler* m_handler;
     screen_context_t m_screenContext;
-    SC_Client_h m_scoreloopClient;
-    SC_UserController_h m_userController;
-    SC_ScoreController_h m_scoreController;
-    SC_ScoresController_h m_scoresController;
-    SC_Score_h m_score;
     bool m_scoreOperationInProgress;
     bool m_leaderboardOperationInProgress;
     bool m_userOperationInProgress;
