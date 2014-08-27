@@ -34,7 +34,7 @@
  */
 static const int BANNER_TEST_ZONE_ID = 117145;
 static const int BANNER_SIZE_X = 468;
-static const int BANNER_SIZE_Y = 60;
+static const int BANNER_SIZE_Y = 97;
 static const int BANNER_POSITION_X = 180;
 static const int BANNER_POSITION_Y = 150;
 
